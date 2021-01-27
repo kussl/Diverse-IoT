@@ -6,108 +6,12 @@ from scipy.interpolate import interp1d
 from sklearn.preprocessing import normalize
 import statistics as stats 
 
-class BARON:
-	def __init__(self):
-		pass 
-	def options(self,findex='0',path=''):
-		cplex_lib_path = os.environ['CPLEX_LIB']
-		fpath = path+str(findex) 
-		opt = """OPTIONS {{
-				results: 1;
-				PrLevel: 0;
-				resname: \"{}.res\";
-				TimName: \"{}.tim\";
-				OptName: \"{}.opt\";
-				MaxIter: 100; 
-				CplexLibName: \"{}\";}}""".format(fpath,fpath,fpath,cplex_lib_path)
-		return opt 
-
-	def binary_vars(self,indexes,prefix='x'):
-		if len(indexes) < 1: 
-			return ''
-		v = "BINARY_VARIABLES "
-		for i in indexes: 
-			v+= prefix+str(i)+","
-		return v[:-1]+";"
-
-	def positive_vars(self,indexes,prefix='x'):
-		if len(indexes) < 1: 
-			return ''
-		v = "POSITIVE_VARIABLES "
-		for i in indexes: 
-			if len(prefix) == 0: 
-				v+= i+","
-			else: 
-				v+= prefix+str(i)+","
-		return v[:-1]+";"
-
-	def declare_equations(self,indexes,prefix='e'):
-		v = "EQUATIONS "
-		for i in indexes: 
-			if len(prefix) == 0: 
-				v+= i+","
-			else: 
-				v+= prefix+str(i)+","
-		return v[:-1]+";"
-
-	def obj_fn(self, fn):
-		return 'OBJ: '+fn+';'
-
-	def out_file(self,program,findex,fpath):
-		opts  = self.options(findex,'baron/')
-		f = open(fpath,'w')
-		print(opts,file=f)
-		print('',file=f)
-		print(program['binary_vars'],file=f)
-		print('',file=f)
-		print(program['positive_vars'],file=f)
-		print('',file=f)
-		print(program['equations'],file=f)
-		print('',file=f)
-		print(program['obj'],file=f)
-
-		f.close()
-
-	def run_exec(self,path):
-		bpath = os.environ.get('BARON_PATH')
-		os.execl(bpath, "baron", path)
-
-	def run_subp(self,path):
-		bpath = os.environ.get('BARON_PATH')
-		cmd = [bpath, path]
-		p = subprocess.Popen(cmd, stdout=subprocess.PIPE) 
-		p.wait()
-
-	def read_sol(self,index=0):
-		path = '{}/baron/{}.res'.format(os.environ['IOTDIV_PATH'],index)
-		f = open(path,'r')
-		for line in f: 
-			if line.find('The best solution found is') > -1: 
-				next(f)
-				next(f)
-				break 
-		V = [] 
-		for line in f: 
-			if len(line) < 2: 
-				break 
-			line = line.split('			')
-			sol = eval(line[2])
-			v = line[0].lstrip()
-			V.append((v,sol))
-
-		objective_value = 0 
-		for line in f: 
-			if line.find('The above solution') > -1: 
-				s = line.split(':')
-				s = s[1].lstrip().rstrip()
-				objective_value = eval(s)
-		V.append(('OBJ',objective_value))
-		return V
-
+from baron import BARON 
 
 class BARONiotdiv(BARON):
 	def __init__(self):
-		pass 
+		pass
+
 	def row_constraints(self,indexes,m,c):
 		limit = 1  
 		equations = ''
@@ -198,65 +102,9 @@ class BARONiotdiv(BARON):
 
 		return program 
 
-class Simulator:
+class SimulationPlots:
 	def __init__(self):
 		pass 
-
-	def execute_baron(self,program,X):
-		BR = BARONiotdiv()
-		path = os.environ['IOTDIV_PATH']+'/baron/program.bar'
-		start = time.time()
-		BR.out_file(program,'0',path)
-		BR.run_subp(path)
-		end = time.time()
-
-		#print('Solution produced in {} seconds.'.format(round(end-start,4))) 
-
-		return BR.process_sol(X)
-
-	def normalize(self,V): 
-		V = np.array(V).reshape(1,-1)
-		V = normalize(V)
-		V = V.tolist()[0]
-		return V  
-
-
-	def update_R(self,X,R,c): 
-		'''
-		Examine each row, add one to the counter for the
-		configurations that were used in the selected row. 
-		'''
-		for x in X: 
-			R = [R[i] if x[i]==0 else R[i]+1 for i in range(c)]
-		return R #self.normalize(R)
-
-	def update_I(self,X,S,I,c): 
-		'''
-		Examine each attacker skill, add one to the counter for the
-		configurations that were used AND compromised. 
-		'''
-		for x in X: 
-			I = [I[i]+1 if S[i]==1 and x[i]==1 else I[i] for i in range(c)]
-		return I #self.normalize(I)
-
-	def count_compromised(self,X,S,I,c):
-		'''
-		Examine each attacker skill, add one to the compromised counter, 
-		if the skill matches the chosen configuration. 
-		'''
-		compromised = 0 
-
-		for x in X: 
-			c = sum([1 if S[i]==1 and x[i]==1 else 0 for i in range(c)]) 
-			if c > 0: 
-				compromised+=1 
-		return compromised
-
-	def update_attacker(self, sample_space, n, c):
-		chosen_indexes = random.sample(sample_space, n)
-		S = [1 if i in chosen_indexes else 0 for i in range(c)]
-		return S 
-
 	def plot_results(self,R, I, S, O, iterations):
 		fig, ax = plt.subplots()
 
@@ -296,13 +144,109 @@ class Simulator:
 
 		ax.legend()
 		ax.set_xlabel('Iterations', fontsize=18)
-		ax.set_ylabel('Insecurity cost', fontsize=18)
+		ax.set_ylabel('Insecurity', fontsize=18)
 		ax.grid(color='.95',linestyle='-', linewidth=.5)
 		#ax.set_title('')
 		fig.tight_layout()
 		plt.savefig("fig.PDF",dpi=None, facecolor='w', edgecolor='w',
 		orientation='portrait', format=None,
 		transparent=False, bbox_inches=None, pad_inches=0.1, metadata=None)
+
+
+class Normalizer:
+	def __init__(self):
+		pass
+	def normalize(self,V): 
+		V = np.array(V).reshape(1,-1)
+		V = normalize(V)
+		V = V.tolist()[0]
+		return V  
+
+	def normalized_mean(self, V): 
+		X = np.array([x for x in V])
+		X = normalize(X.reshape(1, -1))
+		m = np.mean(X)
+		return m
+
+	def normalized_max(self, V): 
+		X = np.array([x for x in V])
+		X = normalize(X.reshape(1, -1)).tolist()
+		X = [sum(x) for x in X]
+		m = max(X) 
+		return m 
+
+	def simple_mean(self, V):
+		return stats.mean(V)
+
+	def normalized(self, V):
+		#return self.normalized_max(V)
+		return self.simple_mean(V)
+		#return self.normalized_mean(V)
+
+
+class Simulator:
+	def __init__(self,c=128,d=8,k=1,nA=4):
+		#Number of configurations
+		self.c = c
+		#Number of devices 
+		self.d = d
+		#Machines per devices 
+		self.k = k 
+		#Machines
+		self.m = d*k 
+		#Number of attackers 
+		self.nA = nA 
+
+	def execute_baron(self,program,X):
+		BR = BARONiotdiv()
+		path = os.environ['IOTDIV_PATH']+'/baron/program.bar'
+		start = time.time()
+		BR.out_file(program,'0',path)
+		BR.run_subp(path)
+		end = time.time()
+
+		#print('Solution produced in {} seconds.'.format(round(end-start,4))) 
+
+		return BR.process_sol(X)
+
+	
+
+	def update_R(self,X,R,c): 
+		'''
+		Examine each row, add one to the counter for the
+		configurations that were used in the selected row. 
+		'''
+		for x in X: 
+			R = [R[i] if x[i]==0 else R[i]+1 for i in range(c)]
+		return R 
+
+	def update_I(self,X,S,I,c): 
+		'''
+		Examine each attacker skill, add one to the counter for the
+		configurations that were used AND compromised. 
+		'''
+		for x in X: 
+			I = [I[i]+1 if S[i]==1 and x[i]==1 else I[i] for i in range(c)]
+		return I 
+
+	def count_compromised(self,X,S,I,c):
+		'''
+		Examine each attacker skill, add one to the compromised counter, 
+		if the skill matches the chosen configuration. 
+		'''
+		compromised = 0 
+
+		for x in X: 
+			c = sum([1 if S[i]==1 and x[i]==1 else 0 for i in range(c)]) 
+			if c > 0: 
+				compromised+=1 
+		return compromised
+
+	def update_attacker(self, sample_space, n, c):
+		chosen_indexes = random.sample(sample_space, n)
+		S = [1 if i in chosen_indexes else 0 for i in range(c)]
+		
+		return S 
 
 	def record_attackers(self, S):
 		f = open("attackers.csv","a+")
@@ -321,15 +265,15 @@ class Simulator:
 
 	def load_configs(self):
 		#Number of configurations
-		c = 32
+		c = self.c
 		#Number of devices 
-		d = 8
+		d = self.d
 		#Machines per devices 
-		k = 1 
+		k = self.k
 		#Machines
-		m = d*k 
+		m = self.m
 		#Number of attackers 
-		nA = 4
+		nA = self.nA
 
 		#Configuration matrix
 		X = [[0 for i in range(c)] for i in range(m)] 
@@ -348,36 +292,24 @@ class Simulator:
 		#probability of being vulnerable. We'll use a slightly
 		#different weight for some of them. 
 		sample_space = [i for i in range(c)]
-		#Repeat the first four configs twice each.
-		#That means, these first four are more vulnerable. 
+
+		T = int(c*.1)
+		l = int(c*.05)
+		#Repeat the first T configs twice each.
+		#That means, these first T are more vulnerable. 
 		for i in range(2):
-			sample_space += [i for i in range(0,4)]
+			sample_space += [i for i in range(0,T)]
 
 		return c,d,k,m,nA,X,D,R,I,p,sample_space
 
-	def normalized_mean(self, V): 
-		X = np.array([x for x in V])
-		X = normalize(X.reshape(1, -1))
-		m = np.mean(X)
-		print(m)
-		raise Exception('nothing')
-		return m 
-
-	def normalized_max(self, V): 
-		X = np.array([x for x in V])
-		X = normalize(X.reshape(1, -1)).tolist()
-		X = [sum(x) for x in X]
-		#print(X[0])
-		m = stats.mean(X)
-		#print(m)
-		#raise Exception('nothing')
-		return m 
 
 
-	def simulate_basic(self,beta,omega):
+	def simulate_basic(self,beta,omega,iterations = 150):
 		c,d,k,m,nA,X,D,R,I,p,sample_space = self.load_configs()
 
-		print('Simulating defense with beta {} and omega {}'.format(beta,omega))
+		print('Simulating defense with beta '\
+			'{} and omega {} with {} iterations '\
+			'and {} configurations.'.format(beta,omega,iterations,c))
 
 		n = ceil(c*p)
 
@@ -385,13 +317,15 @@ class Simulator:
 
 		#record of objective function values. 
 		O = []
-		iterations = 150
 
 		#record insecurity scores
 		IS = [] 
 
+		#Empty copy of I
+		current_I = I[:]
+
 		#Reset repetition rates every xr ticks. 
-		xr = ceil(iterations/ 100000) 
+		xr = ceil(iterations*.2) 
 
 		#If we have logged attacker, we'll use them. 
 		AS = self.read_attackers()
@@ -401,41 +335,34 @@ class Simulator:
 		else: 
 			l = 0  
 
+		Norm = Normalizer()
+
 		for i in range(iterations):
-			#print("({})".format(i))
 			#Start generating BARON program
-			program = BR.gen_program(beta,omega,m,c,D,self.normalize(R),self.normalize(I))
+			program = BR.gen_program(beta,omega,m,c,D,Norm.normalize(R),Norm.normalize(I))
 			X,obj = self.execute_baron(program,X)
 			O.append(obj) 
-
-			#print('Obj: {}\nConfig: {}'.format(obj,X))
 			
 			#Repeat for the number of attackers.
 			if l > 0:
 				S = AS[l-1]
-				l-=1  
-			else: 
+				l-=1
+			else:
 				S = self.update_attacker(sample_space, n, c)
 				self.record_attackers(S)
 
-			#print('Attacker skills:',S)
+			#X is the configuration matrix
+			#R is the repetition record, I is the insecurity record
+			#S is the attacker skill set 
 			R = self.update_R(X,R,c)
+			current_I = self.update_I(X,S,[0 for i in range(c)],c)
 			I = self.update_I(X,S,I,c)
 
-			# print(R)
-			# print(I)
-			# print(S)
-			# print('X:')
-			# for x in X:
-			# 	print(x)
-			# print(obj)
-
-			IS.append(self.normalized_mean(I))
+			score = Norm.normalized(I)
 			
-			# print('Repetition rates:',R)
-			# print('Insecurity rates:', I)
-			# print('Attacker, repetition, and insecurity rates updated.')
 
+			IS.append(score)
+			
 			xr-=1 
 			if (xr == 0):
 				xr = ceil(iterations/ 10) 
@@ -458,7 +385,7 @@ class Simulator:
 	The attacker starts with one configuration and moves to another 
 	one at a time. This is expected to confuse the defense. 
 	'''
-	def simulate_stepwise(self,beta,omega): 
+	def simulate_stepwise(self,beta,omega,iterations = 150): 
 		c,d,k,m,nA,X,D,R,I,p,sample_space = self.load_configs()
 
 		print('Simulating defense with beta {} and omega {}'.format(beta,omega))
@@ -469,13 +396,13 @@ class Simulator:
 
 		#record of objective function values. 
 		O = []
-		iterations = 150
+		
 
 		#record insecurity scores
 		IS = [] 
 
 		#Reset repetition rates every xr ticks. 
-		xr = ceil(iterations/ 10) 
+		xr = ceil(iterations*.2) 
 
 		#If we have logged attacker, we'll use them. 
 		AS = self.read_attackers()
@@ -490,10 +417,12 @@ class Simulator:
 			#T*=4 
 			ASX += T 
 
+		Norm = Normalizer()
+
 		for i in range(iterations):
 			#print("({})".format(i))
 			#Start generating BARON program
-			program = BR.gen_program(beta,omega,m,c,D,self.normalize(R),self.normalize(I))
+			program = BR.gen_program(beta,omega,m,c,D,Norm.normalize(R),Norm.normalize(I))
 			X,obj = self.execute_baron(program,X)
 			O.append(obj) 
 
@@ -503,20 +432,23 @@ class Simulator:
 			S = ASX.pop() 
 
 			R = self.update_R(X,R,c)
+
 			I = self.update_I(X,S,I,c)
 
-			# print(R)
-			# print(I)
-			# print(S)
-			# print('X:')
-			# for x in X:
-			# 	print(x)
-			# print(obj)
 
-			IS.append(self.normalized_mean(I))
+			IS.append(Norm.normalized(I))
 
 		return O, i+1, IS
 
+
+	def refresh_attacker(self,l,AS,sample_space,n,c):
+		if l > 0:
+			S = AS[l-1]
+			l-=1  
+		else: 
+			S = self.update_attacker(sample_space, n, c)
+			self.record_attackers(S)
+		return S 
 
 	'''
 	This simulator uses a defense that is not accurate in 
@@ -524,25 +456,24 @@ class Simulator:
 	defense can detect if a specific configuration was compromised. 
 	'''
 
-	def simulate_inaccurate(self,beta,omega,P=.7):
+	def simulate_inaccurate(self,beta,omega,P=.7,iterations=150):
 		c,d,k,m,nA,X,D,R,I,p,sample_space = self.load_configs()
 
 		recorded_I = I[:]
 
-		print('Simulating defense with probability {}'.format(P))
+		print('Simulating defense with probability {} and C={}'.format(P,c))
 		n = ceil(c*p)
 
 		BR = BARONiotdiv()
 
 		#record of objective function values. 
 		O = []
-		iterations = 150
 
 		#record insecurity scores
 		IS = [] 
 
 		#Reset repetition rates every xr ticks. 
-		xr = ceil(iterations/ 100000) 
+		xr = ceil(iterations*.2) 
 
 
 		#If we have logged attacker, we'll use them. 
@@ -554,22 +485,30 @@ class Simulator:
 		else: 
 			l = 0  
 
+		attacker_update_rate = 1 #int(iterations*.2)
+		attacker_update_counter = 0 
+		print('Attacker update rate: {}'.format(attacker_update_rate))
+		S = self.refresh_attacker(l,AS,sample_space,n,c)
+
+		Norm = Normalizer()
+
 		for i in range(iterations):
 			#print("({})".format(i))
 			#Start generating BARON program
-			program = BR.gen_program(beta,omega,m,c,D,self.normalize(R),self.normalize(I))
+			program = BR.gen_program(beta,omega,m,c,D,Norm.normalize(R),Norm.normalize(I))
 			X,obj = self.execute_baron(program,X)
 			O.append(obj) 
 
-			#print('Obj: {}\nConfig: {}'.format(obj,X))
 			
-			#Repeat for the number of attackers.
-			if l > 0:
-				S = AS[l-1]
-				l-=1  
+
+			#Update the attacker according to the update rate. 
+			if attacker_update_counter == attacker_update_rate: 
+				S = self.refresh_attacker(l,AS,sample_space,n,c)
+				attacker_update_counter = 0 
+				#print(S,'updated.')
 			else: 
-				S = self.update_attacker(sample_space, n, c)
-				self.record_attackers(S)
+				attacker_update_counter+=1 
+
 
 			#print('Attacker skills:',S)
 			#Update repetition score
@@ -585,17 +524,114 @@ class Simulator:
 			if (choice == 1):
 				I = self.update_I(X,S,I,c)
 			recorded_I = self.update_I(X,S,recorded_I,c)
-
-			IS.append(self.normalized_mean(recorded_I))
-		
+			score = Norm.normalized(recorded_I)
+			IS.append(score)
 
 			#Reset repetition rate
-			# xr-=1 
-			# if (xr == 0):
-			# 	xr = ceil(iterations/ 10) 
-			# 	R = [0 for i in range(c)]
+			xr-=1 
+			if (xr == 0):
+				xr = ceil(iterations/ 10) 
+				R = [0 for i in range(c)]
 
 		return O,i+1, IS
+
+	def random_configs(self,X):
+		c = len(X[0])
+		m = len(X)
+		for i in range(m): 
+			pick = random.randint(0,c-1) 
+			X[i] = [0 for k in range(c)]
+			X[i][pick] = 1 
+
+		return X 
+
+	def simulate_randomized(self,beta,omega,P=.7,iterations=150,inaccurate=True):
+		c,d,k,m,nA,X,D,R,I,p,sample_space = self.load_configs()
+
+		print('Simulating randomized defense with {} iterations and {} configurations.'.format(iterations,c))
+		n = ceil(c*p)
+
+		BR = BARONiotdiv()
+
+		#record of objective function values. 
+		O = []
+
+		#record insecurity scores
+		IS = [] 
+
+		#Reset repetition rates every xr ticks. 
+		xr = ceil(iterations*.2) 
+
+
+		#Keep a copy of I
+		recorded_I = [x for x in I]
+
+
+		#If we have logged attacker, we'll use them. 
+		AS = self.read_attackers()
+		AS = [] 
+		if AS: 
+			print('Loaded logged attacker.')
+			l = len(AS)
+		else: 
+			l = 0  
+
+		Norm = Normalizer()
+
+		attacker_update_rate = 1 #int(iterations*.2)
+		attacker_update_counter = 0 
+		print('Attacker update rate: {}'.format(attacker_update_rate))
+		S = self.refresh_attacker(l,AS,sample_space,n,c)
+
+		for i in range(iterations):
+
+			#Generate a random configuration set X with no memory. 
+			X = self.random_configs(X) 
+
+			#Update the attacker according to the update rate. 
+			if attacker_update_counter == attacker_update_rate: 
+				S = self.refresh_attacker(l,AS,sample_space,n,c)
+				attacker_update_counter = 0 
+			else: 
+				attacker_update_counter+=1 
+
+			if inaccurate:
+				'''Update insecurity score given probability P.
+				We will keep two copies. One copy represents the true
+				insecurity that will be used to examine the results 
+				and one is used to compute the next configuration. '''
+
+				choices = random.choices([1,0], weights = [P,1-P], k=1)
+				choice = choices[0]
+				if (choice == 1):
+					I = self.update_I(X,S,I,c)
+				recorded_I = self.update_I(X,S,recorded_I,c)
+				score = Norm.normalized(recorded_I)
+				IS.append(score)
+
+			#Reset repetition rate
+			xr-=1 
+			if (xr == 0):
+				xr = ceil(iterations/ 10) 
+				R = [0 for i in range(c)]
+
+		return O,i+1, IS
+
+
+	'''
+	For this attack campaign, a single attacker tries to 
+	attack a single configuration at a time to discover the 
+	configurations used at the target network. Initially, X* has 
+	a random configuration set. As the attack proceeds, more
+	stable configurations are added. That is, a stable configuration 
+	remains in X* and will be assumed to be used by the target network. 
+
+	I haven't yet completed this attack method. 
+	'''
+
+	
+
+	
 		
 		
 		
